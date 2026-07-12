@@ -28,3 +28,14 @@ def create_jarvis_agent() -> Agent:
         instructions=JARVIS_INSTRUCTIONS,
         tools=[open_application, open_website],
     )
+
+
+def create_jarvis_orchestrator() -> "JarvisOrchestrator":
+    """Create the full JARVIS stack with planner and main agent."""
+    from jarvis.brain.orchestrator import JarvisOrchestrator
+    from jarvis.brain.planner import create_planner_agent
+
+    return JarvisOrchestrator(
+        jarvis_agent=create_jarvis_agent(),
+        planner_agent=create_planner_agent(),
+    )

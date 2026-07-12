@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from agents import Runner, SQLiteSession
+from agents import SQLiteSession
 
-from jarvis.agent import create_jarvis_agent
+from jarvis.agent import create_jarvis_orchestrator
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 MEMORY_DB = PROJECT_ROOT / "jarvis_memory.db"
@@ -29,7 +29,7 @@ def load_api_key() -> str:
 
 async def chat_loop() -> None:
     """Run the interactive JARVIS terminal session."""
-    agent = create_jarvis_agent()
+    orchestrator = create_jarvis_orchestrator()
     session = SQLiteSession(SESSION_ID, MEMORY_DB)
 
     print("JARVIS is online.")
@@ -49,8 +49,8 @@ async def chat_loop() -> None:
                 print("Goodbye.")
                 break
 
-            result = await Runner.run(agent, user_input, session=session)
-            print(f"JARVIS: {result.final_output}\n")
+            response = await orchestrator.run(user_input, session=session)
+            print(f"JARVIS: {response}\n")
     finally:
         session.close()
 
