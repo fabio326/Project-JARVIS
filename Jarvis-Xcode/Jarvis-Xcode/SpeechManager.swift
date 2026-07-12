@@ -11,12 +11,21 @@ final class SpeechManager: NSObject, ObservableObject {
     @Published var isSpeaking = false
     @Published var authorizationError: String?
 
+    /// Called once when speech ends automatically via silence detection or a final result.
+    var onSpeechFinished: ((String) -> Void)?
+
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let audioEngine = AVAudioEngine()
     private let synthesizer = AVSpeechSynthesizer()
 
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+
+    // Silence detection state.
+    private let silenceDuration: TimeInterval = 1.2
+    private var silenceTimerWorkItem: DispatchWorkItem?
+    private var hasCalledSpeechFinished = false
+    private var hasRecognizedMeaningfulSpeech = false
 
     override init() {
         super.init()
@@ -61,6 +70,8 @@ final class SpeechManager: NSObject, ObservableObject {
 
         transcript = ""
         authorizationError = nil
+        hasCalledSpeechFinished = false
+        hasRecognizedMeaningfulSpeech = false
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
@@ -78,8 +89,23 @@ final class SpeechManager: NSObject, ObservableObject {
                 guard let self else { return }
 
                 if let result {
-                    // Partial results update continuously while the user is speaking.
-                    self.transcript = result.bestTranscription.formattedString
+                    let newText = result.bestTranscription.formattedString
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    if !newText.isEmpty {
+                        // Partial results update continuously while the user is speaking.
+                        self.transcript = newText
+
+                        // Ignore brief microphone noise until real words appear.
+                        if newText.count >= 2 {
+                            self.hasRecognizedMeaningfulSpeech = true
+                            self.resetSilenceTimer()
+                        }
+                    }
+
+                    if result.isFinal {
+                        self.finishListeningAfterSpeech()
+                    }
                 }
 
                 if let error {
@@ -103,7 +129,7 @@ final class SpeechManager: NSObject, ObservableObject {
         }
     }
 
-    /// Stop listening and end the active recognition task safely.
+    /// Stop listening manually without triggering the automatic completion callback.
     func stopListening() {
         cleanupRecognition()
     }
@@ -157,7 +183,40 @@ final class SpeechManager: NSObject, ObservableObject {
         return AVSpeechSynthesisVoice(language: "en-US")
     }
 
-    private func cleanupRecognition() {
+    /// Restart the silence countdown whenever new meaningful speech is recognized.
+    private func resetSilenceTimer() {
+        cancelSilenceTimer()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.handleSilenceDetected()
+            }
+        }
+
+        silenceTimerWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + silenceDuration, execute: workItem)
+    }
+
+    private func cancelSilenceTimer() {
+        silenceTimerWorkItem?.cancel()
+        silenceTimerWorkItem = nil
+    }
+
+    private func handleSilenceDetected() {
+        guard isListening else { return }
+        guard hasRecognizedMeaningfulSpeech else { return }
+        finishListeningAfterSpeech()
+    }
+
+    /// End listening after silence or a final recognition result and notify once.
+    private func finishListeningAfterSpeech() {
+        guard !hasCalledSpeechFinished else { return }
+        guard isListening else { return }
+
+        let finalTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        cancelSilenceTimer()
+
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -169,6 +228,29 @@ final class SpeechManager: NSObject, ObservableObject {
         recognitionRequest = nil
         recognitionTask = nil
         isListening = false
+        hasRecognizedMeaningfulSpeech = false
+
+        guard !finalTranscript.isEmpty else { return }
+
+        hasCalledSpeechFinished = true
+        onSpeechFinished?(finalTranscript)
+    }
+
+    private func cleanupRecognition() {
+        cancelSilenceTimer()
+
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
+
+        audioEngine.inputNode.removeTap(onBus: 0)
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+
+        recognitionRequest = nil
+        recognitionTask = nil
+        isListening = false
+        hasRecognizedMeaningfulSpeech = false
     }
 }
 

@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var message = ""
     @State private var jarvisResponse = "Good evening, Fabio."
     @State private var isThinking = false
+    @State private var lastAutoSubmittedTranscript = ""
 
     var body: some View {
         ZStack {
@@ -115,6 +116,9 @@ struct ContentView: View {
             .padding(40)
         }
         .frame(minWidth: 850, minHeight: 620)
+        .onAppear {
+            speechManager.onSpeechFinished = handleAutomaticSpeechFinished
+        }
     }
 
     private var voiceStatusText: String {
@@ -202,6 +206,8 @@ struct ContentView: View {
             return
         }
 
+        lastAutoSubmittedTranscript = ""
+
         if speechManager.isSpeaking {
             speechManager.stopSpeaking()
         }
@@ -211,6 +217,18 @@ struct ContentView: View {
             guard authorized else { return }
             speechManager.startListening()
         }
+    }
+
+    private func handleAutomaticSpeechFinished(_ transcript: String) {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmed.isEmpty else { return }
+        guard !isThinking else { return }
+        guard trimmed != lastAutoSubmittedTranscript else { return }
+
+        lastAutoSubmittedTranscript = trimmed
+        message = trimmed
+        sendMessage()
     }
 
     private func sendMessage() {
